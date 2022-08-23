@@ -1,0 +1,380 @@
+# Lisp with Cheney garbage collection in 1k lines of C, explained
+
+A quick glance at this small Lisp interpreter's features:
+
+- Lisp with _floating point_, _strings_, proper _closures_, and _macros_
+- over _40 built-in Lisp primitives_
+- _lexically-scoped_ locals, like tinylisp
+- proper _tail recursion_, including tail calls through `begin`, `cond`, `if`, `let`, `let*`, `letrec`, `letrec*`
+- _exceptions_ and error handling with safe return to REPL after an error
+- _break with CTRL-C_ to return to the REPL (optional)
+- REPL with GNU _readline_ for convenient Lisp input (optional)
+- _load Lisp_ source code files
+- _execution tracing_ to display Lisp evaluation steps
+- Cheney _copying garbage collector_ to recycle unused cons pair cells, atoms and strings
+- Lisp memory is a _single `cell[]` array_, no `malloc()` and `free()` calls
+- easily _customizable and extensible_ to add new special features
+- _integrates with C (and C++)_ code by calling C (C++) functions for Lisp primitives, for example to embed a Lisp interpreter
+
+I've documented this project's source code extensively to explain the inner workings of the Lisp interpreter, which should make it easy to use and to modify the code.  This small Lisp interpreter includes a copying garbage collector, which requires double the heap memory, but is efficient and has the advantage of being free of recursion.  On the other hand, cells, atoms and strings on the heap are moved by the copying garbage collector.  This requires registering C variables that contain Lisp values (e.g. the local variables of a C function).  When `n` variables `x1` to `xn` are registered with `var(n, &x1, &x2, ...&xn)` with the garbage collector to update, then these variables are automatically updated to reference the moved cells, atoms and strings on the heap.  A C function must return with `return ret(n, <ret-value>)` to de-register `n` variables and return `<ret-value>`.
+
+## Is it really Lisp?
+
+Like [tinylisp](https://github.com/Robert-van-Engelen/tinylisp), this Lisp preserves the original meaning and flavor of [John McCarthy](https://en.wikipedia.org/wiki/John_McCarthy_(computer_scientist))'s [Lisp](https://en.wikipedia.org/wiki/Lisp_(programming_language)) as much as possible:
+
+    > (define curry
+          (lambda (f x)
+              (lambda args
+                  (f x . args))))
+    > ((curry + 1) 2 3)
+    6
+
+If your Lisp can't [curry](https://en.wikipedia.org/wiki/Currying) like this, it isn't classic Lisp!
+
+## Proper tail recursive
+
+Tail-recursive calls and tail calls in general are optimized.  For example, `(forever inf)` infinite recursion:
+
+    > (define forever
+          (lambda (n)
+              (if (eq? 0 n)
+                  'done
+                  (write "forever\n") (forever (- n 1)))))
+    > (forever inf)
+    forever
+    forever
+    ...
+
+Tail call optimization is applied to the last function evaluated when its return value is not used as an argument to another function to operate on.  Tail call optimization is also applied to the tail calls made through the `begin`, `cond`, `if`, `let`, `let*`, `letrec`, and `letrec*` special forms.
+
+## Running Lisp
+
+Initialization imports `init.lisp` first, when located in the working directory.  Otherwise this step is skipped.  You can load Lisp source files with `(load "name.lisp")`, for example
+
+    $ ./lisp
+    ...
+    defun
+    6199>(load "nqueens.lisp")
+    ...
+    (- - - - - - - @)
+    (- - - @ - - - -)
+    (@ - - - - - - -)
+    (- - @ - - - - -)
+    (- - - - - @ - -)
+    (- @ - - - - - -)
+    (- - - - - - @ -)
+    (- - - - @ - - -)
+
+    done
+
+The prompt displays the number of free cons pair cells available.
+
+## Execution tracing
+
+An execution trace displays each evaluation step:
+
+    6199>(trace)
+    1
+    6199>((curry + 1) 2 3)
+      15: curry => {8096}
+      15: + => <+>
+      15: 1 => 1
+      15: lambda => <lambda>
+       9: (curry + 1) => {6214}
+      11: 2 => 2
+      11: 3 => 3
+       9: f => <+>
+      11: x => 1
+      11: args => (2 3)
+       3: ((curry + 1) 2 3) => 6
+    6
+
+Note: the origin of a tail call may not be displayed.
+
+## Compilation
+
+Just one source code file [lisp-cheney.c](src/lisp-cheney.c) to compile:
+
+    $ cc -o lisp lisp-cheney.c -O2 -DHAVE_SIGNAL_H -DHAVE_READLINE_H -lreadline
+
+Without CTRL-C to break and without the [GNU readline](https://en.wikipedia.org/wiki/GNU_Readline) library:
+
+    $ cc -o lisp lisp-cheney.c -O2
+
+## Testing
+
+    cd tests && ./runtests.sh
+
+## Lisp language features
+
+### Numbers
+
+Double precision floating point numbers, including `inf`, `-inf` and `nan`.  Numbers may also be entered in hexadecimal `0xh...h` format.
+
+### Symbols
+
+Lisp symbols consist of a sequence of non-space characters, excluding `(`, `)` and quotes.  When used in a Lisp expression, a symbol is looked-up for its value, like a variable typically refers to its value.  Symbols can be '-quoted like `'foo` to use symbols literally and to pass them to functions.
+
+### Booleans
+
+Well, Lisp doesn't need Booleans.  An `()` empty list (called nil) is considered false and anything not `()` is considered true.  For convenience, `#t` is a symbol representing true (`#t` evaluates to itself, i.e. quoting is not needed.)
+
+### Strings
+
+Strings are "-quoted and may contain `\a`, `\b`, `\t`, `\n`, `\v`, `\f` and `\r` escapes.  Use `\"` to escape the quote and `\\` to escape the backslash.  For example, `"\"foo\tbar\"\n"` includes quotes at the start and end, a tab `\t` and a newline `\n`.
+
+    (string x1 x2 ... xk)
+
+returns a string concatenation of the specified symbols, strings and/or numbers.  Arguments can be lists containing a sequence of 8-bit character codes (ASCII/UTF-8) to construct a string.
+
+### Lists
+
+Lists are code and data in Lisp.  Syntactically, a dot may be used for the last list element to construct a pair rather than a list.  For example, `'(1 . 2)` is a pair, whereas `'(1 2)` is a list.  By the nature of linked lists, a list after a dot creates a list, not a pair.  For example, `'(1 . (2 . ()))` is the same as `'(1 2)`.  Note that lists form a chain of pairs ending in a `()` nil.  
+
+### Function calls
+
+    (<function> <expr1> <expr2> ... <exprn>)
+
+applies a function to the rest of the list of expresssions as its arguments.  The following are all built-in functions, called "primitives" and "special forms".
+
+### Quoting and unquoting
+
+    (quote <expr>)
+
+protects `<expr>` from evaluation by quoting, same as `'<expr>`.  For example, `'(1 () foo (bar 7))` is a list containing unevaluated expressions protected by the quote.
+
+    (eval <quoted-expr>)
+
+evaluates a quoted expression and returns its value.  For example, `(eval '(+ 1 2))` is 3.
+
+### Constructing and deconstructing pairs and lists
+
+    (cons x y)
+
+constructs a pair `(x . y)` for expressions `x` and `y`.  Lists are formed by chaining sevaral cons pairs, with the empty list `()` as the last `y`.  For example, `(cons 1 (cons 2 ()))` is the same as `'(1 2)`.
+
+    (car <pair>)
+
+returns the first part `x` of a pair `(x . y)` or list.
+
+    (cdr <pair>)
+
+returns the second part `y` of a pair `(x . y)`.  For lists this returns the rest of the list after the first part.
+
+### Arithmetic
+
+    (+ n1 n2 ... nk)
+    (- n1 n2 ... nk)
+    (* n1 n2 ... nk)
+    (/ n1 n2 ... nk)
+
+add, substract, multiply or divide the `n1` by `n2` to `nk`.  Subtraction and division with only one value are treated as special cases such that `(- 2)` is -2 and `(/ 2)` is 0.5.
+
+    (int n)
+
+returns the integer part of a number `n`.
+
+### Logic
+
+    (< x y)
+
+returns `#t` (true) if `x` < `y`.  Otherwise, returns `()` (empty list means false).  The ordering among values of different types is as follows: () < number < primitive < symbol < string < pair/list < closure < macro.  Non-atomic pair/list, closure and macro values are ordered by their location in the cell pool, which is consistent during program execution but may differ between program executions.
+
+    (eq? x y)
+
+returns `#t` (true) if values `x` and `y` are identical.  Otherwise, returns `()` (empty list means false).  Numbers, symbols and strings of the same value are always identical, but non-empty lists may or may not be identical even when their values are the same.
+
+    (not x)
+
+returns `#t` if `x` is not `()`.  Otherwise, returns `()` (empty list means false).
+
+    (or x1 x2 ... xk)
+
+returns the value of the first `x` that is not `()`.  Otherwise, returns `()` (empty list means false).  Only evaluates the `x` until the first is not `()`, i.e. the `or` is conditional.
+
+    (and x1 x2 ... xk)
+
+returns the value of the last `x` if all `x` are not `()`.  Otherwise, returns `()` (empty list means false).  Only evaluates the `x` until the first is `()`, i.e. the `and` is conditional.
+
+Note that `(or (and <test> <then>) <else>)` forms an if-then-else.  However, like Lua for example, this is not correct when the `<test>` evluates to true but `<then>` is nil (the `()` empty list.)  In that case `<else>` is evaluated.
+
+### Conditionals
+
+    (cond (x1 y1) (x2 y2) ... (xk yk))
+
+returns the value of `y` corresponding to the first `x` that is not `()` (meaning not false, i.e. true.)  If an `y` is missing then `y` defaults to `()`.  If the `y` are multiple expressions, then all such expressions are evaluated and the value of the last expression is returned.
+
+    (if x y z)
+
+if `x` is not `()` (meaning not false, i.e. true), then return `y` else return `z`.  If `z` is missing then `()` is returned.  If `z` are multiple expressions, then all such expressions are evaluated and the value of the last expression is returned.
+
+### Lambdas
+
+    (lambda <variables> <expr>)
+
+returns an anonymous function "closure" with a list of variables and an expression as its body.  For example, `(lambda (n) (* n n))` squares its argument.  The variables of a lambda may be a single name (not placed in a list) to pass all arguments as a named list.  For example, `(lambda args args)` returns its arguments as a list.  The pair dot may be used to indicate the rest of the arguments.  For example, `(lambda (f x . args) (f . args))` applies a function argument`f` to the arguments `args`, while ignoring `x`.  The closure includes the lexical scope of the lambda, i.e. local names defined in the outer scope can be used in the body.  For example, `(lambda (f x) (lambda args (f x . args)))` is a function that takes function `f` and argument `x` to return a [curried function](https://en.wikipedia.org/wiki/Currying).
+
+### Macros
+
+    (macro <variables> <expr>)
+
+a macro is like a function, except that it does not evaluate its arguments.  Macros typically construct Lisp code that is evaluated when the macro is expanded.  For example, the `defun` macro (see init.lisp) simplifies function definitions `(define defun (macro (f v x) (list 'define f (list 'lambda v x))))` such that `(defun fun (vars...) body)` expands to `(define fun (lambda (vars...) body))` using the convenient Lisp `list` function (see init.lisp) to construct the Lisp code list.
+
+### Globals
+
+    (define <symbol> <expr>)
+
+globally defines a symbol associated with the value of an expression.  If the expression is a function or a macro, then this globally defines the function or macro.
+
+    (assoc <quoted-symbol> <environment>)
+
+returns the value associated with the quoted symbol in the given environment.
+
+    (env)
+
+returns the current environment.  When executed in the REPL, returns the global environment.
+
+### Locals
+
+Locals are declared with the following `let` special forms.  These forms differ slightly in syntax from other Lisp and Scheme implementations, with the aim to make let-forms more intuitive to use (I spent a lot of time debugging my student's Scheme programs as many of them mistakingly forgot to use a list of pairs in the let-forms, so it's time to get rid of that once and for all, but if you don't like it then change this Lisp implementation as you wish):
+
+    (let (v1 x1) (v2 x2) ... (vk xk) y)
+    (let* (v1 x1) (v2 x2) ... (vk xk) y)
+
+evaluates `y` with a local scope of bindings for symbols `v` bound to the corresponding values of `x`.  The star versions sequentially bind the symbols from the first to the last, the non-star simultaneously bind.  Note that other Lisp implementations may require placing all `(v x)` in a list, but allow multiple `y` (you can use `begin` instead).
+
+    (letrec (v1 x1) (v2 x2) ... (vk xk) y)
+    (letrec* (v1 x1) (v2 x2) ... (vk xk) y)
+
+evaluates `y` with a local scope of recursive bindings for symbols `v` bound to the corresponding values of `x`.  The star versions sequentially bind the symbols from the first to the last, the non-star simultaneously bind.  Note that other Lisp implementations may require placing all `(v x)` in a list, but allow multiple `y` (you can use `begin` instead).
+
+If an `x` is missing then `x` defaults to `()`.  If the `x` are multiple expressions, then all such expressions are evaluated and the value of the last expression is bound to the corresponding `v`.
+
+### Assignments
+
+    (setq <symbol> x)
+
+destructively assigns a globally or locally-bound symbol a new value.
+
+    (set-car! <pair> x)
+    (set-cdr! <pair> y)
+
+destructively assigns a pair a new car or cdr value, respectively.
+
+### Input and output
+
+    (load <name>)
+
+loads the specified file name (name is a string or a symbol.)
+
+    (read)
+
+returns the Lisp expression read from input.
+
+    (print x1 x2 ... xk)
+    (println x1 x2 ... xk)
+
+prints the expressions.  Strings are quoted.
+
+    (write x1 x2 ... xk)
+
+prints the expressions.  Strings are not quoted.
+
+### Debugging
+
+    (trace <0|1|2>)
+    (trace <0|1|2> <expr>)
+
+disables tracing (0), enables tracing (1), and enables tracing with ENTER key press (2).  The first form enables or disables tracing of expression evaluation.  The second form enables or disables tracing of `<expr>` specifically.
+
+### Exceptions
+
+    (catch <expr>)
+
+catch exceptions in the evaluation of an expression, returns the value of the expression or `(ERR . n)` for nonzero error code `n`.
+
+    (throw n)
+
+throws error `n`, where `n` is a nonzero integer.
+
+### Statement sequencing and repetition
+
+    (begin x1 x2 ... xk)
+
+sequentially evaluates expressions, returns the value of the last expression.
+
+    (while x y1 y2 ... yk)
+
+while `x` is not `()` (meaning true), evaluates expressions `y`.  Returns the last value of `yk` or `()` when the loop never ran.
+
+### Type checking
+
+    (type <expr>)
+
+returns a value -1 (nil), 0 (number), 1 (primitive), 2 (symbol), 3 (string), 4 (cons pair), 6 (closure) and 7 (macro) to identify the type of `<expr>`.
+
+### Quit
+
+    (quit)
+
+exits Lisp.
+
+## Library functions and macros
+
+Additional Lisp functions and macros are defined in [init.lisp](src/init.lisp).
+
+    (defun <symbol> <variables> <expr>)
+
+defines a named function with variables and a function body.  A shorthand for `(define <symbol> (lambda <variables> <expr>))`.
+
+    (defmacro <symbol> <variables> <expr>)
+
+defines a named macro with variables and a body.  A shorthand for `(define <symbol> (macro <variables> <expr>))`.
+
+    (null? x)
+    (number? x)
+    (symbol? x)
+    (string? x)
+    (pair? x)
+    (atom? x)
+    (list? x)
+
+returns `#t` if `x` is of a specific type or structure.
+
+    (equal? x y)
+
+returns `#t` if values `x` and `y` are identical or structurally equal.
+
+    (list x1 x2 ... xn)
+
+returns the list of evaluated `x1`, `x2`, ... `xn`.
+
+    (seq n1 n2)
+    (range n1 n2 [n3])
+
+returns a list of numbers `n1` up to but excluding `n2`, with an optional step `n3` when specified.
+
+    (length t)
+    (append t1 t2)
+    (reverse t)
+    (member x t)
+    (foldr f x t)
+    (foldl f x t)
+    (min t)
+    (max t)
+    (filter f t)
+    (all? f t)
+    (any? f t)
+    (mapcar f t)
+    (map f t1 t2 ... tn)
+    (zip t1 t2 ... tn)
+
+which are the common non-destructive list operations on lists `t` with functions `f` and values `x`.
+
+    (Y f)
+
+is the fixed-point [Y combinator](https://en.wikipedia.org/wiki/Fixed-point_combinator#Fixed-point_combinators_in_lambda_calculus).
+
+    (reveal f)
+
+reveals the contents of `f` by displaying the `lambda` of a closure `f` and the body of a `macro` `f`.
