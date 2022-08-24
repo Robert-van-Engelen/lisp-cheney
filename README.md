@@ -1,4 +1,4 @@
-# Lisp with Cheney garbage collection in 1k lines of C, explained
+# Lisp in 1k lines of C, explained
 
 A quick glance at this small Lisp interpreter's features:
 
