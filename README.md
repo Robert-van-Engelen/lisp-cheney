@@ -178,7 +178,7 @@ returns the integer part of a number `n`.
 
     (< x y)
 
-returns `#t` (true) if `x` < `y`.  Otherwise, returns `()` (empty list means false).  The ordering among values of different types is as follows: () < number < primitive < symbol < string < pair/list < closure < macro.  Be warned that non-atomic pair/list, closure and macro values are not ordered by this primitive, due to the copying garbage collector.
+returns `#t` (true) if `x` < `y`.  Otherwise, returns `()` (empty list means false).  The ordering among values of different types is as follows: () < number < primitive < symbol < string < pair/list < closure < macro.  Be warned that non-atomic pair/list, closure and macro values are not ordered by this primitive, due to the copying garbage collector moving cells between heaps, i.e. we cannot simply order by the cell index.
 
     (eq? x y)
 
