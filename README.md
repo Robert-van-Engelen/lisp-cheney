@@ -18,15 +18,16 @@ A quick glance at this small Lisp interpreter's features:
 
 I've documented this project's source code extensively to explain the inner workings of the Lisp interpreter, which should make it easy to use and to modify the code.  This small Lisp interpreter includes a copying garbage collector that is efficient.  Cheney's [copying garbage collector](https://en.wikipedia.org/wiki/Cheney%27s_algorithm) uses two heaps.  Cells, atoms and strings are moved between the heaps by the copying garbage collector to make space.  Because objects are moved, C variables that reference Lisp objects on the heap must be registered with the garbage collector.  To do so, a C function calls `var(n, &x1, &x2, ..., &xn)` to register `n` local variables `x1` to `xn` of type `L` (Lisp object).  The variables are automatically updated by the garbage collector to reference moved cells, atoms and strings on the heap.  The C function returns with `return ret(n, <ret-value>)` to de-register `n` variables and return `<ret-value>`.
 
-The benefit of a copying garbage collector is that the memory allocator acts as a simple efficient push-down stack:
+The benefit of using a copying garbage collector is that the memory allocator acts as an efficient push-down stack:
 
     /* construct pair (x . y) returns a NaN-boxed CONS */
     L cons(L x, L y) {
       cell[--sp] = x;                               /* push the car value x, this protects x from getting GC'ed */
       cell[--sp] = y;                               /* push the cdr value y, this protects y from getting GC'ed */
       return gc(box(CONS, sp));                     /* make sure we have enough space for the (next) new cons pair */
+    }
 
-Likewise, allocating atoms (symbols) and strings is efficient by pushing a space of `W+n` bytes on the heap, where `W` is the width of the symbol/string size field:
+Likewise, allocating atoms (symbols) and strings is efficient by pushing a space of `W+n` bytes up in the heap area pointed to by heap pointer `hp`, where `W` is the width of the symbol/string size field:
 
     /* allocate n bytes on the heap, returns NaN-boxed t=ATOM or t=STRG */
     L alloc(I t, S n) {
