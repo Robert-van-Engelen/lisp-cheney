@@ -18,6 +18,74 @@ A quick glance at this small Lisp interpreter's features:
 
 I've documented this project's source code extensively to explain the inner workings of the Lisp interpreter, which should make it easy to use and to modify the code.  This small Lisp interpreter includes a copying garbage collector that is efficient.  Cheney's [copying garbage collector](https://en.wikipedia.org/wiki/Cheney%27s_algorithm) uses two heaps.  Cells, atoms and strings are moved between the heaps by the copying garbage collector to make space.  Because objects are moved, C variables that reference Lisp objects on the heap must be registered with the garbage collector.  To do so, a C function calls `var(n, &x1, &x2, ..., &xn)` to register `n` local variables `x1` to `xn` of type `L` (Lisp object).  The variables are automatically updated by the garbage collector to reference moved cells, atoms and strings on the heap.  The C function returns with `return ret(n, <ret-value>)` to de-register `n` variables and return `<ret-value>`.
 
+The benefit of a copying garbage collector is that the memory allocator acts as a simple efficient push-down stack:
+
+    /* construct pair (x . y) returns a NaN-boxed CONS */
+    L cons(L x, L y) {
+      cell[--sp] = x;                               /* push the car value x, this protects x from getting GC'ed */
+      cell[--sp] = y;                               /* push the cdr value y, this protects y from getting GC'ed */
+      return gc(box(CONS, sp));                     /* make sure we have enough space for the (next) new cons pair */
+
+Likewise, allocating atoms (symbols) and strings is efficient by pushing a space of `W+n` bytes on the heap, where `W` is the width of the symbol/string size field:
+
+    /* allocate n bytes on the heap, returns NaN-boxed t=ATOM or t=STRG */
+    L alloc(I t, S n) {
+      L x = box(t, W+hp);                           /* NaN-boxed ATOM or STRG points to bytes after the size field W */
+      *(S*)(A+hp) = n;                              /* save size n field in front of the to-be-saved string on the heap */
+      *(A+W+hp) = 0;                                /* make string empty, just in case */
+      hp += W+n;                                    /* try to allocate W+n bytes on the heap */
+      return gc(x);                                 /* check if space is allocatable, GC if necessary, returns updated x */
+    }
+
+The entire garbage collector fits in fewer than 50 lines of C:
+
+    /* move ATOM/STRG/CONS/CLOS/MACR/VARP x from the 1st to the 2nd heap or use its forwarding index, return updated x */
+    L move(L x) {
+      I t = T(x), i = ord(x);                       /* save the tag and ordinal of x */
+      if (t == VARP) {                              /* if x is a VARP */
+        *(P)i = move(*(P)i);                        /*   update the variable by moving its value to the "to" heap */
+        return x;                                   /*   return VARP x */
+      }
+      if ((t & ~(ATOM^STRG)) == ATOM) {             /* if x is an ATOM or a STRG */
+        I j = i-W;                                  /*   j is the index of the size field located before the string */
+        S n = *(S*)(B+j);                           /*   get size n of the string at the "from" heap to move */
+        if (n < 0)                                  /*   if the size is negative, it is a forwarding index */
+          return box(t, -n);                        /*     return ATOM with forwarded index to the location on "to" heap */
+        memcpy(A+hp, B+j, W+n);                     /*   move the size field and string from the "from" to the "to" heap */
+        *(S*)(B+j) = -(S)(W+hp);                    /*   leave a negative forwarding index on the "from" heap */
+        hp += W+n;                                  /*   increment heap pointer by the number of allocated bytes */
+        return box(t, hp-n);                        /*   return ATOM/STRG with index of the string on the "to" heap */
+      }
+      if ((t & ~(CONS^MACR)) != CONS)               /* if x is not a CONS/CLOS/MACR pair */
+        return x;                                   /*   return x */
+      if (T(from[i]) == FORW)                       /* if x is a CONS/CLOS/MACR with forwarding index on the "from" heap */
+        return box(t, ord(from[i]));                /*   return x with updated index pointing to "to" heap */
+      cell[--sp] = from[i+1];                       /* move CONS/CLOS/MACR pair from the "from" to the "to" heap */
+      cell[--sp] = from[i];
+      from[i] = box(FORW, sp);                      /* leave a forwarding index on the "from" heap */
+      return box(t, sp);                            /* return CONS/CLOS/MACR with index to the location on the "to" heap */
+    }
+
+    /* garbage collect with root p, returns (moved) p; pass p=tru to force garbage collection */
+    L gc(L p) {
+      if (hp > (sp-2)<<3 || equ(p, 1) || ALWAYS_GC) {
+        BREAK_OFF;                                  /* do not interrupt GC */
+        I i = N;                                    /* scan pointer starts at the top of the 2nd heap */
+        hp = 0;                                     /* heap pointer starts at the bottom of the 2nd heap */
+        sp = N;                                     /* stack pointer starts at the top of the 2nd heap */
+        from = cell;                                /* move cells from the original 1st "from" heap cell[] */
+        cell = heap[cell == heap[0]];               /* ... to the 2nd heap, which becomes the 1st "to" heap cell[] */
+        vars = move(vars);                          /* move the roots */
+        p = move(p);                                /* move p */
+        while (--i >= sp)                           /* while the scan pointer did not pass the stack pointer */
+          cell[i] = move(cell[i]);                  /*   move the cell from the "from" heap to the "to" heap */
+        BREAK_ON;                                   /* enable interrupt */
+        if (hp > (sp-2)<<3)                         /* if the heap is still full after garbage collection */
+          err(7);                                   /*   we ran out of memory */
+      }
+      return p;
+    }
+
 ## Is it really Lisp?
 
 Like [tinylisp](https://github.com/Robert-van-Engelen/tinylisp), this Lisp preserves the original meaning and flavor of [John McCarthy](https://en.wikipedia.org/wiki/John_McCarthy_(computer_scientist))'s [Lisp](https://en.wikipedia.org/wiki/Lisp_(programming_language)) as much as possible:

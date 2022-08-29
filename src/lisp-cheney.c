@@ -183,7 +183,7 @@ L gc(L p) {
 
 /* allocate n bytes on the heap, returns NaN-boxed t=ATOM or t=STRG */
 L alloc(I t, S n) {
-  L x = box(t, W+hp);
+  L x = box(t, W+hp);                           /* NaN-boxed ATOM or STRG points to bytes after the size field W */
   *(S*)(A+hp) = n;                              /* save size n field in front of the to-be-saved string on the heap */
   *(A+W+hp) = 0;                                /* make string empty, just in case */
   hp += W+n;                                    /* try to allocate W+n bytes on the heap */
