@@ -67,7 +67,7 @@ The entire garbage collector fits in fewer than 50 lines of C:
       return box(t, sp);                            /* return CONS/CLOS/MACR with index to the location on the "to" heap */
     }
 
-    /* garbage collect with root p, returns (moved) p; pass p=tru to force garbage collection */
+    /* garbage collect with root p, returns (moved) p; p=1 forces garbage collection */
     L gc(L p) {
       if (hp > (sp-2)<<3 || equ(p, 1) || ALWAYS_GC) {
         BREAK_OFF;                                  /* do not interrupt GC */
