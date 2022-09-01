@@ -551,11 +551,11 @@ L f_begin(P t, P e) {
 
 L f_while(P t, P e) {
   L s = nil, x = nil;
-  var(1, &s);
+  var(2, &s, &x);
   while (!not(eval(car(*t), e)))
     for (s = cdr(*t); T(s) != NIL; s = cdr(s))
       x = eval(car(s), e);
-  return ret(1, x);
+  return ret(2, x);
 }
 
 L f_cond(P t, P e) {

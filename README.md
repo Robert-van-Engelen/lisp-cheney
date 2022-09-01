@@ -87,6 +87,42 @@ For this allocation strategy to work, we make sure to have at least `W` bytes an
       return p;
     }
 
+I've made the Cheney garbage collection method more compact by placing all active `L`-typed C variables of the Lisp interpreter in a linked list on the Lisp stack itself, rather than in a separate stack data structure.  After registering a C variable with `var()`, a pointer to the variable is added to the linked list and tagged by `VARP`.  The list of `VARP` pointers is `vars`, which serves as a root for garbage collection.  Therefore, the garbage collector will never delete the Lisp data referenced by the C variables.  These active C variables are registered with `var()` and released with `ret()`:
+
+    /* register n variables as roots for garbage collection, all but the first should be nil */
+    void var(int n, ...) {
+      va_list v;
+      for (va_start(v, n); n--; ++state.n)
+        vars = cons(box(VARP, (I)va_arg(v, P)), vars);
+      va_end(v);
+    }
+
+    /* release n registered variables */
+    void unwind(int n) {
+      state.n -= n;
+      while (n--)
+        vars = cdr(vars);
+    }
+
+    /* release n registered variables and return x */
+    L ret(int n, L x) {
+      unwind(n);
+      return x;
+    }
+
+For example, the `while` primitive traverses a list of expressions to evaluate, using a C variable `s` that runs over the list of arguments `*t`:
+
+    L f_while(P t, P e) {
+      L s = nil, x = nil;
+      var(2, &s, &x);
+      while (!not(eval(car(*t), e)))
+        for (s = cdr(*t); T(s) != NIL; s = cdr(s))
+          x = eval(car(s), e);
+      return ret(2, x);
+    }
+
+Variable `s` must be registered with the garbage collector, because `eval()` may trigger garbage collection that causes list `*t` to move.  Also `*t` is registered, this time in `eval()` itself, and that is why we pass a pointer `P t` to `f_while()` instead of `t`.  Lisp expression pointer `P` arguments passed to a C function of the interpreter are already registered with the garbage collector and do not need to be registered again.
+
 ## Is it really Lisp?
 
 Like [tinylisp](https://github.com/Robert-van-Engelen/tinylisp), this Lisp preserves the original meaning and flavor of [John McCarthy](https://en.wikipedia.org/wiki/John_McCarthy_(computer_scientist))'s [Lisp](https://en.wikipedia.org/wiki/Lisp_(programming_language)) as much as possible:
