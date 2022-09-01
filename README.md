@@ -18,7 +18,7 @@ A quick glance at this small Lisp interpreter's features:
 
 I've documented this project's source code extensively to explain the inner workings of the Lisp interpreter, which should make it easy to use and to modify the code.  This small Lisp interpreter includes a copying garbage collector that is efficient.  Cheney's [copying garbage collector](https://en.wikipedia.org/wiki/Cheney%27s_algorithm) uses two heaps.  Cells, atoms and strings are moved between the heaps by the copying garbage collector to make space.  Because objects are moved, C variables that reference Lisp objects on the heap must be registered with the garbage collector.  To do so, a C function calls `var(n, &x1, &x2, ..., &xn)` to register `n` local variables `x1` to `xn` of type `L` (Lisp object).  The variables are automatically updated by the garbage collector to reference moved cells, atoms and strings on the heap.  The C function returns with `return ret(n, <ret-value>)` to de-register `n` variables and return `<ret-value>`.
 
-The benefit of using a copying garbage collector is that the memory allocator acts as an efficient push-down stack:
+A benefit of a copying garbage collector is that memory allocation amounts to simply pushing data on a stack:
 
     /* construct pair (x . y) returns a NaN-boxed CONS */
     L cons(L x, L y) {
@@ -27,7 +27,7 @@ The benefit of using a copying garbage collector is that the memory allocator ac
       return gc(box(CONS, sp));                     /* make sure we have enough space for the (next) new cons pair */
     }
 
-Likewise, allocating atoms (symbols) and strings is efficient by pushing a space of `W+n` bytes up in the heap area pointed to by heap pointer `hp`, where `W` is the width of the symbol/string size field:
+Allocating atoms (symbols) and strings of varying sizes is performed by pushing a space of `W+n` bytes upwards in the heap area pointed to by heap pointer `hp`, where `W` is the width of the symbol/string size field:
 
     /* allocate n bytes on the heap, returns NaN-boxed t=ATOM or t=STRG */
     L alloc(I t, S n) {
@@ -38,7 +38,7 @@ Likewise, allocating atoms (symbols) and strings is efficient by pushing a space
       return gc(x);                                 /* check if space is allocatable, GC if necessary, returns updated x */
     }
 
-The entire garbage collector fits in fewer than 50 lines of C:
+For this allocation strategy to work, we make sure to have at least `W` bytes and two cons cells (16 bytes) always available between the heap and the stack by ensuring the invariant `hp <= (sp-2)<<3`, since `sp` is the `cell[]` index (cells are 8 bytes) and `hp` is a byte offset from the bottom of the heap.  If the invariant no longer holds, then garbage collection is performed.  The entire garbage collector fits in fewer than 50 lines of C:
 
     /* move ATOM/STRG/CONS/CLOS/MACR/VARP x from the 1st to the 2nd heap or use its forwarding index, return updated x */
     L move(L x) {
