@@ -123,6 +123,31 @@ For example, the `while` primitive traverses a list of expressions to evaluate, 
 
 Variable `s` must be registered with the garbage collector, because `eval()` may trigger garbage collection that causes list `*t` to move.  Furthermore, `*t` is already registered before `f_while()` is called, and that is why we pass a pointer `P t` to `f_while()` instead of a value `t` that may become stale after garbage collection.  Lisp expression pointer `P` arguments passed to a C function of the interpreter are already registered with the garbage collector and do not need to be registered again.
 
+Note that `var()` and `ret()` update `state.n`.  The Lisp interpreter `state` is used by the `catch` primitive to save and restore the state after an exception, thereby unwinding the `vars` list "stack" to release all C variables that are no longer active after the exception was caught:
+
+    /* state of the setjump-longjmp exception handler with jump buffer jb and number of active root variables n */
+    struct State {
+      jmp_buf jb;
+      int n;
+    } state;
+
+    L f_catch(P t, P e) {
+      L x;
+      struct State saved = state;
+      if (!(x = setjmp(state.jb)))
+        x = eval(car(*t), e);
+      else {
+        unwind(state.n-saved.n);
+        x = cons(atom("ERR"), x);
+      }
+      state = saved;
+      return x;
+    }
+
+    L f_throw(P t, P e) {
+      longjmp(state.jb, num(car(*t)));
+    }
+
 ## Is it really Lisp?
 
 Like [tinylisp](https://github.com/Robert-van-Engelen/tinylisp), this Lisp preserves the original meaning and flavor of [John McCarthy](https://en.wikipedia.org/wiki/John_McCarthy_(computer_scientist))'s [Lisp](https://en.wikipedia.org/wiki/Lisp_(programming_language)) as much as possible:
