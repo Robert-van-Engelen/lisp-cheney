@@ -87,7 +87,7 @@ For this allocation strategy to work, we make sure to have at least `W` bytes an
       return p;
     }
 
-I've made the Cheney garbage collection method more compact by placing all active `L`-typed C variables of the Lisp interpreter in a linked list on the Lisp stack itself, rather than in a separate stack data structure.  After registering a C variable with `var()`, a pointer to the variable is added to the linked list and tagged by `VARP`.  The list of `VARP` pointers is `vars`, which serves as a root for garbage collection.  Therefore, the garbage collector will never delete the Lisp data referenced by the C variables.  These active C variables are registered with `var()` and released with `ret()`:
+I've made the Cheney garbage collection routines more compact by placing all active `L`-typed C variables of the Lisp interpreter in a linked list on the Lisp stack itself, rather than in a separate stack-like data structure.  After registering a C variable with `var()`, a pointer to the variable is added to the linked list and tagged with `VARP`.  The list of `VARP` pointers is `vars`, which serves as a root for garbage collection.  The garbage collector automatically updates the registered C variables in `move()` when the Lisp expression referenced by the registered variable is moved.  Active C variables are registered with `var()` and released with `ret()`:
 
     /* register n variables as roots for garbage collection, all but the first should be nil */
     void var(int n, ...) {
