@@ -27,7 +27,7 @@ A benefit of a copying garbage collector is that memory allocation amounts to si
       return gc(box(CONS, sp));                     /* make sure we have enough space for the (next) new cons pair */
     }
 
-Allocating atoms (symbols) and strings of varying sizes is performed by pushing a space of `W+n` bytes upwards in the heap area pointed to by heap pointer `hp`, where `W` is the width of the symbol/string size field:
+Allocating atoms (symbols and strings) of varying sizes is performed by pushing a space of `W+n` bytes upwards in the heap area pointed to by heap pointer `hp`, where `W` is the width of the symbol/string size field:
 
     /* allocate n bytes on the heap, returns NaN-boxed t=ATOM or t=STRG */
     L alloc(I t, S n) {
@@ -38,7 +38,7 @@ Allocating atoms (symbols) and strings of varying sizes is performed by pushing 
       return gc(x);                                 /* check if space is allocatable, GC if necessary, returns updated x */
     }
 
-For this allocation strategy to work, we make sure to have at least `W` bytes and two cons cells (16 bytes) always available between the heap and the stack by ensuring the invariant `hp <= (sp-2)<<3`, since `sp` is the `cell[]` index (cells are 8 bytes) and `hp` is a byte offset from the bottom of the heap.  If the invariant no longer holds, then garbage collection is performed.  The entire garbage collector fits in fewer than 50 lines of C:
+For this allocation strategy to work, we make sure to have at least `W` bytes and two cons cells (16 bytes) always available between the heap and the stack by ensuring the invariant `hp <= (sp-2)<<3` always holds, since `sp` is the `cell[]` index (cells are 8 bytes) and `hp` is a byte offset from the bottom of the heap.  If the invariant no longer holds, then garbage collection is performed to make space available.  If that fails then we ran out of memory.  The entire garbage collector fits in fewer than 50 lines of C:
 
     /* move ATOM/STRG/CONS/CLOS/MACR/VARP x from the 1st to the 2nd heap or use its forwarding index, return updated x */
     L move(L x) {
@@ -87,7 +87,7 @@ For this allocation strategy to work, we make sure to have at least `W` bytes an
       return p;
     }
 
-I've made the Cheney garbage collection routines more compact by placing all active `L`-typed C variables of the Lisp interpreter in a linked list on the Lisp stack itself, rather than in a separate stack-like data structure.  After registering a C variable with `var()`, a pointer to the variable is added to the linked list and tagged with `VARP`.  The list of `VARP` pointers is `vars`, which serves as a root for garbage collection.  The garbage collector automatically updates the registered C variables in `move()` when the Lisp expression referenced by the registered variable is moved.  Active C variables are registered with `var()` and released with `ret()`:
+I've made the Cheney garbage collection routines more compact by placing all active `L`-typed C variables of the Lisp interpreter registered with `var()` in a linked list on the Lisp stack itself, rather than in a separate stack-like data structure.  After registering a C variable with `var()`, a pointer to the variable is added to the linked list and tagged with `VARP`.  The list of `VARP` pointers is `vars`, which serves as a root for garbage collection.  The garbage collector automatically updates the registered C variables in `move()` when the Lisp expression referenced by the registered variable is moved.  Active C variables are registered with `var()` and released with `ret()`:
 
     /* register n variables as roots for garbage collection, all but the first should be nil */
     void var(int n, ...) {
