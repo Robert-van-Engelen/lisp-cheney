@@ -63,10 +63,10 @@ void using_history() { }
         t      a NaN-boxing tag
    S variables are named as follows:
         n      string length or negative forwarding index of an ATOM/STRG */
-typedef double   L;                             /* Lisp expression type: NaN-boxed 64 bit double floating point */
-typedef uint64_t I;                             /* unsigned 64 bit integer of a NaN-boxed double */
-typedef int      S;                             /* signed size of an atom string on the heap, negative for forwarding */
-typedef L       *P;                             /* pointer to a root variable with a value that is updated by GC */
+typedef double             L;                             /* Lisp expression type: NaN-boxed 64 bit double floating point */
+typedef unsigned long long I;                             /* unsigned 64 bit integer of a NaN-boxed double */
+typedef int                S;                             /* signed size of an atom string on the heap, negative for forwarding */
+typedef L                 *P;                             /* pointer to a root variable with a value that is updated by GC */
 
 /* T(x) returns the tag bits of a NaN-boxed Lisp expression x */
 #define T(x) (*(I*)&x >> 48)
