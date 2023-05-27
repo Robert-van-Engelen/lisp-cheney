@@ -562,7 +562,8 @@ L f_while(P t, P e) {
 L f_cond(P t, P e) {
   while (T(*t) != NIL && not(eval(car(car(*t)), e)))
     *t = cdr(*t);
-  *t = cdr(car(*t));
+  if (T(*t) != NIL)
+    *t = cdr(car(*t));
   return f_begin(t, e);
 }
 
