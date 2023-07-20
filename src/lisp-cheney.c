@@ -387,7 +387,7 @@ char scan() {
 }
 
 /* return the Lisp expression parsed and read from input */
-L read() {
+L readlsp() {
   scan();
   return parse();
 }
@@ -400,7 +400,7 @@ L list() {
     if (scan() == ')')
       break;
     if (*buf == '.' && !buf[1]) {
-      x = read();
+      x = readlsp();
       if (scan() != ')')
         ERR(8, "expecing ) ");
       *(T(p) == CONS ? &CDR(p) : &t) = x;
@@ -419,7 +419,7 @@ L parse() {
   if (*buf == '(')
     return list();
   if (*buf == '\'') {
-    L y = cons(read(), nil);
+    L y = cons(readlsp(), nil);
     var(1, &y);
     x = atom("quote");
     return ret(1, cons(x, y));
@@ -662,7 +662,7 @@ L f_read(P t, P _) {
   L x; char c = see;
   see = ' ';
   *ps = 0;
-  x = read();
+  x = readlsp();
   see = c;
   return x;
 }
@@ -953,6 +953,6 @@ int main(int argc, char **argv) {
     gc(1);
     snprintf(ps, sizeof(ps), "%llu>", sp-hp/8);
     out = stdout;
-    print(eval(read(), &env));
+    print(eval(readlsp(), &env));
   }
 }
