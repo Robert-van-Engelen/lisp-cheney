@@ -946,7 +946,7 @@ int main(int argc, char **argv) {
     unwind(state.n-2);                          /* unwind all but the first two, env and tru */
     while (fin)                                 /* close all open files */
       fclose(in[--fin]);
-    printf("ERR %d %s", i, errors[i > 0 && i <= ERRORS ? i : 0]);
+    printf("ERR %d: %s", i, errors[i > 0 && i <= ERRORS ? i : 0]);
   }
   while (1) {
     putchar('\n');
