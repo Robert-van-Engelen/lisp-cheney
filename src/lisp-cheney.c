@@ -538,7 +538,7 @@ L f_or(P t, P e) {
 }
 
 L f_and(P t, P e) {
-  L x = nil;
+  L x = tru;
   while (T(*t) != NIL && !not(x = eval(car(*t), e)))
     *t = cdr(*t);
   return x;
