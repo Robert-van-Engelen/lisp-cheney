@@ -225,7 +225,7 @@ L cdr(L p) {
 
 /* construct a pair to add to environment *e, returns the list ((v . x) . *e) */
 L pair(L v, L x, P e) {
-  L p = cons(v, x);                             /* construct the pair (v . x) first, may trigger GC */
+  L p = cons(v, x);                             /* construct the pair (v . x) first, may trigger GC of *e */
   return cons(p, *e);                           /* construct the list ((v . x) . *e) with a GC-updated *e */
 }
 
@@ -387,8 +387,8 @@ L list() {
   L t = nil, p = nil, x;
   var(2, &t, &p);
   while (scan() != ')') {
-    if (*buf == '.' && !buf[1]) {
-      x = readlisp();
+    if (*buf == '.' && !buf[1]) {               /* parse list with dot pair ( <expr> ... <expr> . <expr> ) */
+      x = readlisp();                           /* read expression to replace the last nil at the end of the list */
       if (scan() != ')')
         ERR(8, "expecing ) ");
       *(T(p) == CONS ? &CDR(p) : &t) = x;
@@ -406,12 +406,19 @@ L tick() {
   if (*buf == ',')
     return readlisp();                          /* parse and return Lisp expression */
   if (*buf != '(') {
-    x = cons(parse(), nil);
+    x = cons(parse(), nil);                     /* construct singleton first, may trigger GC */
     return cons(atom("quote"), x);              /* parse expression and return (quote <expr>) */
   }
   var(2, &t, &p);
   t = p = cons(atom("list"), nil);
   while (scan() != ')') {
+    if (*buf == '.' && !buf[1]) {               /* tick list with dot pair ( <expr> ... <expr> . <expr> ) */
+      x = readlisp();                           /* read expression to replace the last nil at the end of the list */
+      if (scan() != ')')
+        ERR(8, "expecing ) ");
+      *(T(p) == CONS ? &CDR(p) : &t) = x;
+      break;
+    }
     x = cons(tick(), nil);                      /* next ticked item for the list, construct before using p */
     p = CDR(p) = x;                             /* p is the cdr to replace it with the rest of the list */
   }
@@ -875,8 +882,9 @@ L eval(L x, P e) {
     return step(x, e);
   var(1, &x);                                   /* register var x to display later again */
   y = step(x, e);
-  printf("%4d: ", state.n); print(x);           /* <vars>: unevaluated expression */
-  printf(" => ");           print(y);           /* => value of the expression */
+  printf("\e[32m%4d: \e[33m", state.n); print(x);       /* <vars>: unevaluated expression */
+  printf("\e[36m => \e[33m");           print(y);       /* => value of the expression */
+  printf("\e[m\t");
   if (tr > 1)                                   /* wait for ENTER key or other CTRL */
     while (getchar() >= ' ')
       continue;
@@ -946,7 +954,7 @@ int main(int argc, char **argv) {
     unwind(state.n-2);                          /* unwind all but the first two, env and tru */
     while (fin)                                 /* close all open files */
       fclose(in[--fin]);
-    printf("ERR %d: %s", i, errors[i > 0 && i <= ERRORS ? i : 0]);
+    printf("\e[31;1mERR %d: %s\e[m", i, errors[i > 0 && i <= ERRORS ? i : 0]);
   }
   while (1) {
     putchar('\n');
