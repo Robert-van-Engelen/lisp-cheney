@@ -49,7 +49,7 @@ void using_history() { }
 
 /* we only need three types to implement a Lisp interpreter with a copying garbage collector:
         L      Lisp expression (a double with NaN boxing)
-        I      integer (a 64 bit unsigned integer)
+        I      unsigned integer (64 bit unsigned)
         S      size of an atom string on the heap and atom forwarding index when negative
    L variables and function parameters are named as follows:
         x,y    any Lisp expression
@@ -73,11 +73,11 @@ typedef L       *P;                             /* pointer to a root variable wi
 #define T(x) (*(I*)&x >> 48)
 
 /* primitive, atom, string, cons, closure, macro, GC forward, GC var pointer and nil tags (reserve 0x7ff8 for nan) */
-I PRIM=0x7ff9, ATOM=0x7ffa, STRG=0x7ffb, CONS=0x7ffc, CLOS=0x7ffe, MACR=0x7fff, FORW=0xfffd, VARP=0xfffe, NIL=0xffff;
+enum { PRIM=0x7ff9, ATOM=0x7ffa, STRG=0x7ffb, CONS=0x7ffc, CLOS=0x7ffe, MACR=0x7fff, FORW=0xfffd, VARP=0xfffe, NIL=0xffff };
 
 /* NaN-boxing specific functions */
 L box(I t, I i) { i |= t<<48; return *(P)&i; }          /* return NaN-boxed double with tag t and 48 bit ordinal i */
-I ord(L x)      { return *(I*)&x & 0xffffffffffff; }    /* remove tag bits to return the 48 bit ordinal */ 
+I ord(L x)      { return *(I*)&x & 0xffffffffffff; }    /* remove tag bits to return the 48 bit ordinal */
 L num(L n)      { return n; }                           /* check for a valid number: return n == n ? n : err(5); */
 I equ(L x, L y) { return *(I*)&x == *(I*)&y; }          /* return nonzero if x equals y */
 
@@ -97,15 +97,7 @@ L err(int n) { longjmp(state.jb, n); }
 
 #define ERRORS 8
 const char *errors[ERRORS+1] = {
-  "",
-  "not a pair",                                 /* 1 */
-  "break",                                      /* 2 */
-  "unbound symbol",                             /* 3 */
-  "cannot apply",                               /* 4 */
-  "arguments",                                  /* 5 */
-  "stack over",                                 /* 6 */
-  "out of memory",                              /* 7 */
-  "syntax"                                      /* 8 */
+  "", "not a pair", "break", "unbound symbol", "cannot apply", "arguments", "stack over", "out of memory", "syntax"
 };
 
 /*----------------------------------------------------------------------------*\
@@ -371,16 +363,14 @@ char scan() {
         buf[i++] = esc ? esc-abtnvfr+7 : see;   /* replace \x with an escaped code or x itself */
         get();
       }
-    }
-    while (i < sizeof(buf)-1 && !seeing('"') && !seeing('\n'));
+    } while (i < sizeof(buf)-1 && !seeing('"') && !seeing('\n'));
     if (get() != '"')
       ERR(8, "missing \" ");
   }
-  else if (seeing('(') || seeing(')') || seeing('\''))
-    buf[i++] = get();                           /* ( ) ' are single-character tokens */
+  else if (seeing('(') || seeing(')') || seeing('\'') || seeing('`') || seeing(','))
+    buf[i++] = get();                           /* ( ) ' ` , are single-character tokens */
   else                                          /* tokenize a symbol or a number */
-    do
-      buf[i++] = get();
+    do buf[i++] = get();
     while (i < sizeof(buf)-1 && !seeing('(') && !seeing(')') && !seeing(' '));
   buf[i] = 0;
   return *buf;                                  /* return first character of token in buf[] */
@@ -396,9 +386,7 @@ L readlisp() {
 L list() {
   L t = nil, p = nil, x;
   var(2, &t, &p);
-  while (1) {
-    if (scan() == ')')
-      break;
+  while (scan() != ')') {
     if (*buf == '.' && !buf[1]) {
       x = readlisp();
       if (scan() != ')')
@@ -406,31 +394,44 @@ L list() {
       *(T(p) == CONS ? &CDR(p) : &t) = x;
       break;
     }
-    x = cons(parse(), nil);
-    p = *(T(p) == CONS ? &CDR(p) : &t) = x;
+    x = cons(parse(), nil);                     /* next parsed expression for the list, construct before using p and t */
+    p = *(T(p) == CONS ? &CDR(p) : &t) = x;     /* p is the cdr or head of the list to replace with rest of the list */
   }
   return ret(2, t);
 }
 
+/* return a list/quote-converted Lisp expression (backquote aka. backtick) */
+L tick() {
+  L t = nil, p = nil, x;
+  if (*buf == ',')
+    return readlisp();                          /* parse and return Lisp expression */
+  if (*buf != '(') {
+    x = cons(parse(), nil);
+    return cons(atom("quote"), x);              /* parse expression and return (quote <expr>) */
+  }
+  var(2, &t, &p);
+  t = p = cons(atom("list"), nil);
+  while (scan() != ')') {
+    x = cons(tick(), nil);                      /* next ticked item for the list, construct before using p */
+    p = CDR(p) = x;                             /* p is the cdr to replace it with the rest of the list */
+  }
+  return ret(2, t);                             /* return (list <expr> ... <expr>) */
+}
+
 /* return a parsed Lisp expression */
 L parse() {
-  L x;
-  int i;
-  if (*buf == '(')
-    return list();
-  if (*buf == '\'') {
-    L y = cons(readlisp(), nil);
-    var(1, &y);
-    x = atom("quote");
-    return ret(1, cons(x, y));
+  L x; int i;
+  switch (*buf) {
+    case '(':  return list();                   /* if token is ( then parse a list */
+    case '\'': x = cons(readlisp(), nil);       /* construct singleton first, may trigger GC */
+               return cons(atom("quote"), x);   /* if token is ' then quote an expression */
+    case '`':  scan(); return tick();           /* if token is a ` then list/quote-convert an expression */
+    case '"':  return string(buf+1);            /* if token is a string, then return a new string */
+    case ')':  return ERR(8, "unexpected ) ");
   }
-  if (*buf == '"')                              /* if token is a string, then return a new string */
-    return string(buf+1);
   if (sscanf(buf, "%lg%n", &x, &i) > 0 && !buf[i])
     return x;                                   /* return a number, including inf, -inf and nan */
-  if (*buf != ')')
-    return atom(buf);                           /* return an atom (a symbol) */
-  return ERR(8, "unexpected ) ");
+  return atom(buf);                             /* return an atom (a symbol) */
 }
 
 /*----------------------------------------------------------------------------*\
@@ -542,6 +543,10 @@ L f_and(P t, P e) {
   while (T(*t) != NIL && !not(x = eval(car(*t), e)))
     *t = cdr(*t);
   return x;
+}
+
+L f_list(P t, P e) {
+  return evlis(t, e);
 }
 
 L f_begin(P t, P e) {
@@ -774,6 +779,7 @@ struct {
   {"not",      f_not,     0},                   /* (not x) => #t if x==() else ()t */
   {"or",       f_or,      0},                   /* (or x1 x2 ... xk) => #t if any x1 is not () else () */
   {"and",      f_and,     0},                   /* (and x1 x2 ... xk) => #t if all x1 are not () else () */
+  {"list",     f_list,    0},                   /* (list x1 x2 ... xk) => (x1 x2 ... xk) -- evaluates x1, x2 ... xk */
   {"begin",    f_begin,   1},                   /* (begin x1 x2 ... xk) => xk -- evaluates x1, x2 to xk */
   {"while",    f_while,   0},                   /* (while x y1 y2 ... yk) -- while x is not () evaluate y1, y2 ... yk */
   {"cond",     f_cond,    1},                   /* (cond (x1 y1) (x2 y2) ... (xk yk)) => yi for first xi!=() */
@@ -800,8 +806,8 @@ struct {
   {"catch",    f_catch,   0},                   /* (catch <expr>) => <value-of-expr> if no exception else (ERR . n) */
   {"throw",    f_throw,   0},                   /* (throw n) -- raise exception error code n (integer != 0) */
   {"quit",     f_quit,    0},                   /* (quit) -- bye! */
-  {0}};                                         
-                                                
+  {0}};
+
 /* evaluate x in environment e, returns value of x, tail-call optimized */
 L step(L x, P e) {
   L f = nil, v = nil, d = nil, z = nil;
@@ -902,22 +908,16 @@ void printlist(L t) {
 
 /* output Lisp expression x */
 void print(L x) {
-  if (T(x) == NIL)
-    fprintf(out, "()");
-  else if (T(x) == ATOM)
-    fprintf(out, "%s", A+ord(x));
-  else if (T(x) == STRG)
-    fprintf(out, "\"%s\"", A+ord(x));
-  else if (T(x) == PRIM)
-    fprintf(out, "<%s>", prim[ord(x)].s);
-  else if (T(x) == CONS)
-    printlist(x);
-  else if (T(x) == CLOS)
-    fprintf(out, "{%llu}", ord(x));
-  else if (T(x) == MACR)
-    fprintf(out, "[%llu]", ord(x));
-  else
-    fprintf(out, FLOAT, x);
+  switch (T(x)) {
+    case NIL:  fprintf(out, "()");                   break;
+    case PRIM: fprintf(out, "<%s>", prim[ord(x)].s); break;
+    case ATOM: fprintf(out, "%s", A+ord(x));         break;
+    case STRG: fprintf(out, "\"%s\"", A+ord(x));     break;
+    case CONS: printlist(x);                         break;
+    case CLOS: fprintf(out, "{%llu}", ord(x));       break;
+    case MACR: fprintf(out, "[%llu]", ord(x));       break;
+    default:   fprintf(out, FLOAT, x);               break;
+  }
 }
 
 /*----------------------------------------------------------------------------*\

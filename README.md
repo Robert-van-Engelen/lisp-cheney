@@ -8,11 +8,11 @@ A quick glance at this small Lisp interpreter's features:
 - proper _tail recursion_, including tail calls through `begin`, `cond`, `if`, `let`, `let*`, `letrec`, `letrec*`
 - _exceptions_ and error handling with safe return to REPL after an error
 - _break with CTRL-C_ to return to the REPL (optional)
-- REPL with GNU _readline_ for convenient Lisp input (optional)
+- REPL with GNU _readline_ for convenient Lisp command line input (optional)
 - _load Lisp_ source code files
 - _execution tracing_ to display Lisp evaluation steps
 - Cheney _copying garbage collector_ to recycle unused cons pair cells, atoms and strings
-- Lisp memory is a _single `cell[]` array_, no `malloc()` and `free()` calls
+- Lisp memory is a _single `cell[]` array_, no `malloc()` and `free()` calls (except each `readline` requires a `free`)
 - easily _customizable and extensible_ to add new special features
 - _integrates with C (and C++)_ code by calling C (C++) functions for Lisp primitives, for example to embed a Lisp interpreter
 
@@ -209,7 +209,7 @@ Initialization imports `init.lisp` first, when located in the working directory.
     $ ./lisp
     ...
     defun
-    6199>(load "nqueens.lisp")
+    6209>(load "nqueens.lisp")
     ...
     (- - - - - - - @)
     (- - - @ - - - -)
@@ -219,18 +219,22 @@ Initialization imports `init.lisp` first, when located in the working directory.
     (- @ - - - - - -)
     (- - - - - - @ -)
     (- - - - @ - - -)
-
+    ()
     done
+    5463>(quit)
+    $
 
 The prompt displays the number of free cons pair cells available.
+
+To quit Lisp, type `(quit)`.
 
 ## Execution tracing
 
 An execution trace displays each evaluation step:
 
-    6199>(trace)
+    6209>(trace)
     1
-    6199>((curry + 1) 2 3)
+    6209>((curry + 1) 2 3)
       15: curry => {8096}
       15: + => <+>
       15: 1 => 1
@@ -308,6 +312,10 @@ evaluates a quoted expression and returns its value.  For example, `(eval '(+ 1 
 
 constructs a pair `(x . y)` for expressions `x` and `y`.  Lists are formed by chaining sevaral cons pairs, with the empty list `()` as the last `y`.  For example, `(cons 1 (cons 2 ()))` is the same as `'(1 2)`.
 
+    (list x1 x2 ... xn)
+
+returns the list of evaluated `x1`, `x2`, ... `xn`, same as `(cons x1 (cons x2 (cons ... (cons xn nil))))`.
+
     (car <pair>)
 
 returns the first part `x` of a pair `(x . y)` or list.
@@ -374,6 +382,10 @@ returns an anonymous function "closure" with a list of variables and an expressi
     (macro <variables> <expr>)
 
 a macro is like a function, except that it does not evaluate its arguments.  Macros typically construct Lisp code that is evaluated when the macro is expanded.  For example, the `defun` macro (see init.lisp) simplifies function definitions `(define defun (macro (f v x) (list 'define f (list 'lambda v x))))` such that `(defun fun (vars...) body)` expands to `(define fun (lambda (vars...) body))` using the convenient Lisp `list` function (see init.lisp) to construct the Lisp code list.
+
+    `<expr>
+
+backquotes `<expr>`, which quotes `<expr>`, but evaluates all `,`-expressions before quoting.  For example, the macro example above can also be written as `(define defun (macro (f v x) `(define ,f (lambda ,v ,x))))` without using `list` to construct lists and "down quotes" to replace variables with their values i.e. unquotes.
 
 ### Globals
 
