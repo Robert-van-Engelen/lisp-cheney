@@ -50,7 +50,7 @@ void using_history() { }
 /* we only need three types to implement a Lisp interpreter with a copying garbage collector:
         L      Lisp expression (a double with NaN boxing)
         I      unsigned integer (64 bit unsigned)
-        S      size of an atom string on the heap and atom forwarding index when negative
+        S      signed integer, size of an atom string on the heap or atom forwarding index when negative
    L variables and function parameters are named as follows:
         x,y    any Lisp expression
         n      number
@@ -60,7 +60,7 @@ void using_history() { }
         e,d    environment, a list of pairs, e.g. created with (define v x)
         v      the name of a variable (an atom) or a list of variables
    I variables and function parameters are named as follows:
-        i,j,k  any unsigned integer, e.g. a NaN-boxed ordinal value
+        i,j,k  any unsigned integer, e.g. a NaN-boxed ordinal value or index
         t      a NaN-boxing tag
    S variables are named as follows:
         n      string length or negative forwarding index of an ATOM/STRG */
@@ -247,13 +247,13 @@ L assoc(L v, L e) {
 }
 
 /* not(x) is nonzero if x is the Lisp () empty list */
-int not(L x) {
+I not(L x) {
   return T(x) == NIL;
 }
 
-/* more(x) is nonzero if x is not an () empty list and not a singleton list (x) */
-int more(L x) {
-  return T(x) != NIL && (x = cdr(x), T(x) != NIL);
+/* more(t) is nonzero if list t has more than one item */
+I more(L t) {
+  return !not(t) && !not(cdr(t));
 }
 
 /* register n variables as roots for garbage collection, all but the first should be nil */
@@ -592,8 +592,13 @@ L f_macro(P t, P e) {
 }
 
 L f_define(P t, P e) {
-  L x = eval(car(cdr(*t)), e);
-  env = pair(car(*t), x, &env);
+  L x = eval(car(cdr(*t)), e), v = car(*t), d;
+  for (d = *e; T(d) == CONS && !equ(v, car(car(d))); d = cdr(d))
+    continue;
+  if (T(d) == CONS)
+    CDR(car(d)) = x;
+  else
+    env = pair(v, x, &env);
   return car(*t);
 }
 
@@ -830,11 +835,10 @@ L step(L x, P e) {
     e = &z;
     if (T(f) == PRIM) {
       x = prim[ord(f)].f(&x, e);
-      if (prim[ord(f)].t)
-        continue;
-      return ret(5, x);
+      if (!prim[ord(f)].t)
+        return ret(5, x);
     }
-    if (T(f) == CLOS) {
+    else if (T(f) == CLOS) {
       v = car(car(f));
       d = cdr(f);
       if (T(d) == NIL)
