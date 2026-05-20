@@ -81,6 +81,16 @@ I ord(L x)      { return *(I*)&x & 0xffffffffffff; }    /* remove tag bits to re
 L num(L n)      { return n; }                           /* check for a valid number: return n == n ? n : err(5); */
 I equ(L x, L y) { return *(I*)&x == *(I*)&y; }          /* return nonzero if x equals y */
 
+/* the file(s) we are reading from or fin=0 when reading from the terminal */
+I fin = 0;
+FILE *in[10];
+
+/* the file we are writing to, stdout by default */
+FILE *out;
+
+/* tokenization buffer, the next character we're looking at, readline pointer and line, prompt string */
+char buf[256], see = '\n', *ptr = "", *line = NULL, ps[20];
+
 /*----------------------------------------------------------------------------*\
  |      ERROR HANDLING AND ERROR MESSAGES                                     |
 \*----------------------------------------------------------------------------*/
@@ -91,9 +101,9 @@ struct State {
   int n;
 } state;
 
-/* report and throw an exception */
+/* report and throw an exception or abort with CTRL-C from REPL prompt */
 #define ERR(n, ...) (fprintf(stderr, __VA_ARGS__), err(n))
-L err(int n) { longjmp(state.jb, n); }
+L err(int n) { if (n != 2 || fin || line) longjmp(state.jb, n); abort(); }
 
 #define ERRORS 8
 const char *errors[ERRORS+1] = {
@@ -284,17 +294,10 @@ void print(L);
  |      READ                                                                  |
 \*----------------------------------------------------------------------------*/
 
-/* the file(s) we are reading or fin=0 when reading from the terminal */
-I fin = 0;
-FILE *in[10];
-
 /* specify an input file to parse and try to open it */
 FILE *input(const char *s) {
   return fin <= 9 && (in[fin] = fopen(s, "r")) ? in[fin++] : NULL;
 }
-
-/* tokenization buffer, the next character we're looking at, the readline line, prompt and input file */
-char buf[256], see = '\n', *ptr = "", *line = NULL, ps[20];
 
 /* advance to the next character */
 void look() {
@@ -444,9 +447,6 @@ L parse() {
 /*----------------------------------------------------------------------------*\
  |      PRIMITIVES -- SEE THE TABLE WITH COMMENTS FOR DETAILS                 |
 \*----------------------------------------------------------------------------*/
-
-/* the file we are writing to, stdout by default */
-FILE *out;
 
 /* construct a new list of evaluated expressions in list t, i.e. the arguments passed to a function or primitive */
 L evlis(P t, P e) {
@@ -619,7 +619,7 @@ L f_let(P t, P e) {
     x = eval(f_begin(&x, e), &d);
     *e = pair(car(car(*t)), x, e);
   }
-  return ret(2, car(*t));
+  return ret(2, T(*t) == NIL ? nil : car(*t));
 }
 
 L f_leta(P t, P e) {
@@ -630,20 +630,21 @@ L f_leta(P t, P e) {
     x = eval(f_begin(&s, e), e);
     *e = pair(car(car(*t)), x, e);
   }
-  return ret(1, car(*t));
+  return ret(1, T(*t) == NIL ? nil : car(*t));
 }
 
 L f_letrec(P t, P e) {
-  L s = nil, x = nil;
-  var(2, &s, &x);
+  L p = nil, s = nil, x = nil;
+  var(3, &p, &s, &x);
   for (s = *t; more(s); s = cdr(s))
-    *e = pair(car(car(s)), nil, e);
-  for (s = *e; more(*t); s = cdr(s), *t = cdr(*t)) {
+    p = *(T(p) == CONS ? &CDR(p) : &x) = pair(car(car(s)), nil, &nil);
+  *(T(p) == CONS ? &CDR(p) : &x) = *e;
+  for (s = *e = x; more(*t); s = cdr(s), *t = cdr(*t)) {
     x = cdr(car(*t));
     x = eval(f_begin(&x, e), e);
     CDR(car(s)) = x;
   }
-  return ret(2, T(*t) == NIL ? nil : car(*t));
+  return ret(3, T(*t) == NIL ? nil : car(*t));
 }
 
 L f_letreca(P t, P e) {
@@ -770,7 +771,7 @@ L f_quit(P t, P _) {
 }
 
 /* table of Lisp primitives, each has a name s, a function pointer f, and a tail-recursive flag t */
-struct {
+const struct {
   const char *s;
   L (*f)(P, P);
   short t;
