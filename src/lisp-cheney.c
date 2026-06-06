@@ -12,7 +12,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>             /* int64_t, uint64_t (or we can use e.g. unsigned long long instead) */
+#include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
 #include <setjmp.h>
@@ -81,19 +81,16 @@ I ord(L x)      { return *(I*)&x & 0xffffffffffff; }    /* remove tag bits to re
 L num(L n)      { return n; }                           /* check for a valid number: return n == n ? n : err(5); */
 I equ(L x, L y) { return *(I*)&x == *(I*)&y; }          /* return nonzero if x equals y */
 
-/* the file(s) we are reading from or fin=0 when reading from the terminal */
-I fin = 0;
-FILE *in[10];
+/*----------------------------------------------------------------------------*\
+ |      I/O BUFFERS AND ERROR MESSAGES                                         |
+\*----------------------------------------------------------------------------*/
 
-/* the file we are writing to, stdout by default */
-FILE *out;
+/* the file(s) we are reading from or fin=0 when reading from the terminal, file we are writing to (default stdout) */
+int fin = 0;
+FILE *in[10], *out;
 
 /* tokenization buffer, the next character we're looking at, readline pointer and line, prompt string */
 char buf[256], see = '\n', *ptr = "", *line = NULL, ps[20];
-
-/*----------------------------------------------------------------------------*\
- |      ERROR HANDLING AND ERROR MESSAGES                                     |
-\*----------------------------------------------------------------------------*/
 
 /* state of the setjump-longjmp exception handler with jump buffer jb and number of active root variables n */
 struct State {
@@ -393,7 +390,7 @@ L list() {
     if (*buf == '.' && !buf[1]) {               /* parse list with dot pair ( <expr> ... <expr> . <expr> ) */
       x = readlisp();                           /* read expression to replace the last nil at the end of the list */
       if (scan() != ')')
-        ERR(8, "expecing ) ");
+        ERR(8, "expecting ) ");
       *(T(p) == CONS ? &CDR(p) : &t) = x;
       break;
     }
@@ -408,6 +405,16 @@ L tick() {
   L t = nil, p = nil, x;
   if (*buf == ',')
     return readlisp();                          /* parse and return Lisp expression */
+  if (*buf == '\'') {
+    var(2, &t, &x);
+    scan();
+    x = cons(atom("quote"), nil);
+    x = cons(atom("quote"), x);
+    t = cons(tick(), nil);
+    t = cons(x, t);
+    t = cons(atom("list"), t);
+    return ret(2, t);                           /* translated '<expr> to (quote <expr>) in tick'ed form */
+  }
   if (*buf != '(') {
     x = cons(parse(), nil);                     /* construct singleton first, may trigger GC */
     return cons(atom("quote"), x);              /* parse expression and return (quote <expr>) */
@@ -421,7 +428,7 @@ L tick() {
       t = cons(t, x);
       t = cons(atom("append"), t);              /* `(x . xs) => (append (list (quote x)) (quote xs)) */
       if (scan() != ')')
-        ERR(8, "expecing ) ");
+        ERR(8, "expecting ) ");
       break;
     }
     x = cons(tick(), nil);                      /* next ticked item for the list, construct before using p */
