@@ -416,10 +416,12 @@ L tick() {
   t = p = cons(atom("list"), nil);
   while (scan() != ')') {
     if (*buf == '.' && !buf[1]) {               /* tick list with dot pair ( <expr> ... <expr> . <expr> ) */
-      x = readlisp();                           /* read expression to replace the last nil at the end of the list */
+      scan();
+      x = cons(tick(), nil);
+      t = cons(t, x);
+      t = cons(atom("append"), t);              /* `(x . xs) => (append (list (quote x)) (quote xs)) */
       if (scan() != ')')
         ERR(8, "expecing ) ");
-      *(T(p) == CONS ? &CDR(p) : &t) = x;
       break;
     }
     x = cons(tick(), nil);                      /* next ticked item for the list, construct before using p */
