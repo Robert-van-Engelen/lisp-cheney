@@ -218,13 +218,13 @@ L cons(L x, L y) {
   return gc(box(CONS, sp));                     /* make sure we have enough space for the (next) new cons pair */
 }
 
-/* return the car of a pair or ERR if not a pair */
+/* return the car of a cons/closure/macro pair; unguarded CAR(p) provides direct memory access */
 #define CAR(p) cell[ord(p)+1]
 L car(L p) {
   return (T(p)&~(CONS^MACR)) == CONS ? CAR(p) : err(1);
 }
 
-/* return the cdr of a pair or ERR if not a pair */
+/* return the cdr of a cons/closure/macro pair; unguarded CDR(p) provides direct memory access */
 #define CDR(p) cell[ord(p)]
 L cdr(L p) {
   return (T(p)&~(CONS^MACR)) == CONS ? CDR(p) : err(1);
@@ -248,9 +248,9 @@ L macro(L v, L x) {
 
 /* look up a symbol in an environment, return its value or ERR if not found */
 L assoc(L v, L e) {
-  while (T(e) == CONS && !equ(v, car(car(e))))
-    e = cdr(e);
-  return T(e) == CONS ? cdr(car(e)) : T(v) == ATOM ? ERR(3, "unbound %s ", A+ord(v)) : err(3);
+  while (T(e) == CONS && !equ(v, car(CAR(e))))
+    e = CDR(e);
+  return T(e) == CONS ? cdr(CAR(e)) : T(v) == ATOM ? ERR(3, "unbound %s ", A+ord(v)) : err(3);
 }
 
 /* not(x) is nonzero if x is the Lisp () empty list */
@@ -260,7 +260,7 @@ I not(L x) {
 
 /* more(t) is nonzero if list t has more than one item */
 I more(L t) {
-  return !not(t) && !not(cdr(t));
+  return T(t) == CONS && T(CDR(t)) == CONS;
 }
 
 /* register n variables as roots for garbage collection, all but the first should be nil */
@@ -461,11 +461,11 @@ L parse() {
 L evlis(P t, P e) {
   L s = nil, p = nil;                           /* new list s = nil with tail pair p = nil */
   var(2, &s, &p);                               /* register s and p for GC updates */
-  for (; T(*t) == CONS; *t = cdr(*t)) {         /* iterate over the list of arguments */
-    L x = cons(eval(car(*t), e), nil);          /* evaluate argument */
+  for (; T(*t) == CONS; *t = CDR(*t)) {         /* iterate over the list of arguments */
+    L x = cons(eval(CAR(*t), e), nil);          /* evaluate argument */
     p = *(T(p) == CONS ? &CDR(p) : &s) = x;     /* build the evaluated list s */
   }
-  if (T(*t) != NIL) {                           /* dot list arguments? */
+  if (T(*t) == ATOM) {                          /* dot list arguments? */
     L x = eval(*t, e);                          /* evaluate the dotted argument */
     *(T(p) == CONS ? &CDR(p) : &s) = x;         /* build the evaluated list s */
   }
@@ -566,8 +566,8 @@ L f_list(P t, P e) {
 }
 
 L f_begin(P t, P e) {
-  for (; more(*t); *t = cdr(*t))
-    eval(car(*t), e);
+  for (; more(*t); *t = CDR(*t))
+    eval(CAR(*t), e);
   return T(*t) == NIL ? nil : car(*t);
 }
 
@@ -601,11 +601,11 @@ L f_macro(P t, P e) {
 }
 
 L f_define(P t, P e) {
-  L x = eval(car(cdr(*t)), e), v = car(*t), d;
-  for (d = *e; T(d) == CONS && !equ(v, car(car(d))); d = cdr(d))
-    continue;
-  if (T(d) == CONS)
-    CDR(car(d)) = x;
+  L x = eval(car(cdr(*t)), e), v = car(*t), d = *e;
+  while (T(d) == CONS && !equ(v, car(CAR(d))))
+    d = CDR(d);
+  if (T(d) == CONS && T(CAR(d)) == CONS)
+    CDR(CAR(d)) = x;
   else
     env = pair(v, x, &env);
   return car(*t);
@@ -623,10 +623,10 @@ L f_env(P _, P e) {
 L f_let(P t, P e) {
   L d = *e, x = nil;
   var(2, &d, &x);
-  for (; more(*t); *t = cdr(*t)) {
-    x = cdr(car(*t));
+  for (; more(*t); *t = CDR(*t)) {
+    x = cdr(CAR(*t));
     x = eval(f_begin(&x, e), &d);
-    *e = pair(car(car(*t)), x, e);
+    *e = pair(car(CAR(*t)), x, e);
   }
   return ret(2, T(*t) == NIL ? nil : car(*t));
 }
@@ -634,10 +634,10 @@ L f_let(P t, P e) {
 L f_leta(P t, P e) {
   L s = nil, x;
   var(1, &s);
-  for (; more(*t); *t = cdr(*t)) {
-    s = cdr(car(*t));
+  for (; more(*t); *t = CDR(*t)) {
+    s = cdr(CAR(*t));
     x = eval(f_begin(&s, e), e);
-    *e = pair(car(car(*t)), x, e);
+    *e = pair(car(CAR(*t)), x, e);
   }
   return ret(1, T(*t) == NIL ? nil : car(*t));
 }
@@ -645,13 +645,13 @@ L f_leta(P t, P e) {
 L f_letrec(P t, P e) {
   L p = nil, s = nil, x = nil;
   var(3, &p, &s, &x);
-  for (s = *t; more(s); s = cdr(s))
-    p = *(T(p) == CONS ? &CDR(p) : &x) = pair(car(car(s)), nil, &nil);
+  for (s = *t; more(s); s = CDR(s))
+    p = *(T(p) == CONS ? &CDR(p) : &x) = pair(car(CAR(s)), nil, &nil);
   *(T(p) == CONS ? &CDR(p) : &x) = *e;
-  for (s = *e = x; more(*t); s = cdr(s), *t = cdr(*t)) {
-    x = cdr(car(*t));
+  for (s = *e = x; more(*t); s = CDR(s), *t = CDR(*t)) {
+    x = cdr(CAR(*t));
     x = eval(f_begin(&x, e), e);
-    CDR(car(s)) = x;
+    CDR(CAR(s)) = x;
   }
   return ret(3, T(*t) == NIL ? nil : car(*t));
 }
@@ -659,20 +659,20 @@ L f_letrec(P t, P e) {
 L f_letreca(P t, P e) {
   L s = nil, x;
   var(1, &s);
-  for (; more(*t); *t = cdr(*t)) {
-    *e = pair(car(car(*t)), nil, e);
-    s = cdr(car(*t));
+  for (; more(*t); *t = CDR(*t)) {
+    *e = pair(car(CAR(*t)), nil, e);
+    s = cdr(CAR(*t));
     x = eval(f_begin(&s, e), e);
-    CDR(car(*e)) = x;
+    CDR(CAR(*e)) = x;
   }
   return ret(1, T(*t) == NIL ? nil : car(*t));
 }
 
 L f_setq(P t, P e) {
-  L x = eval(car(cdr(*t)), e), v = car(*t), d;
-  for (d = *e; T(d) == CONS && !equ(v, car(car(d))); d = cdr(d))
-    continue;
-  return T(d) == CONS ? CDR(car(d)) = x : T(v) == ATOM ? ERR(3, "unbound %s ", A+ord(v)) : err(3);
+  L x = eval(car(cdr(*t)), e), v = car(*t), d = *e;
+  while (T(d) == CONS && !equ(v, car(CAR(d))))
+    d = CDR(d);
+  return T(d) == CONS && T(CAR(d)) == CONS ? CDR(CAR(d)) = x : T(v) == ATOM ? ERR(3, "unbound %s ", A+ord(v)) : err(3);
 }
 
 L f_setcar(P t, P e) {
@@ -726,7 +726,7 @@ L f_string(P t, P e) {
     if ((T(y) & ~(ATOM^STRG)) == ATOM)
       n += strlen(A+ord(y));
     else if (T(y) == CONS)
-      for (; T(y) == CONS; y = cdr(y))
+      for (; T(y) == CONS; y = CDR(y))
         ++n;
     else if (y == y)
       n += snprintf(buf, sizeof(buf), FLOAT, y);
@@ -738,8 +738,8 @@ L f_string(P t, P e) {
     if ((T(y) & ~(ATOM^STRG)) == ATOM)
       n += strlen(strcpy(A+n, A+ord(y)));
     else if (T(y) == CONS)
-      for (; T(y) == CONS; y = cdr(y))
-        *(A+n++) = car(y);
+      for (; T(y) == CONS; y = CDR(y))
+        *(A+n++) = CAR(y);
     else if (y == y)
       n += snprintf(A+n, sizeof(buf), FLOAT, y);
   }
@@ -754,8 +754,8 @@ L f_load(P t, P e) {
 
 L f_trace(P t, P e) {
   I savedtr = tr;
-  tr = T(*t) == NIL ? 1 : car(*t);
-  return more(*t) ? *t = eval(car(cdr(*t)), e), tr = savedtr, *t : tr;
+  tr = T(*t) == CONS ? CAR(*t) : 1;
+  return more(*t) ? *t = eval(CAR(CDR(*t)), e), tr = savedtr, *t : tr;
 }
 
 L f_catch(P t, P e) {
@@ -839,8 +839,8 @@ L step(L x, P e) {
       return ret(5, assoc(x, *e));
     if (T(x) != CONS)
       return ret(5, x);
-    f = eval(car(x), e);
-    x = cdr(x);
+    f = eval(CAR(x), e);
+    x = CDR(x);
     z = *e;
     e = &z;
     if (T(f) == PRIM) {
@@ -849,18 +849,17 @@ L step(L x, P e) {
         return ret(5, x);
     }
     else if (T(f) == CLOS) {
-      v = car(car(f));
-      d = cdr(f);
+      d = CDR(f);
       if (T(d) == NIL)
         d = env;
-      for (; T(v) == CONS && T(x) == CONS; v = cdr(v), x = cdr(x)) {
-        L y = eval(car(x), e);
-        d = pair(car(v), y, &d);
+      for (v = car(CAR(f)); T(v) == CONS && T(x) == CONS; v = CDR(v), x = CDR(x)) {
+        L y = eval(CAR(x), e);
+        d = pair(CAR(v), y, &d);
       }
       if (T(v) == CONS) {
         x = eval(x, e);
-        for (; T(v) == CONS && T(x) == CONS; v = cdr(v), x = cdr(x))
-          d = pair(car(v), car(x), &d);
+        for (; T(v) == CONS && T(x) == CONS; v = CDR(v), x = CDR(x))
+          d = pair(CAR(v), CAR(x), &d);
         if (T(v) == CONS)
           return ret(5, err(5));
       }
@@ -870,19 +869,18 @@ L step(L x, P e) {
         x = eval(x, e);
       if (T(v) != NIL)
         d = pair(v, x, &d);
-      x = cdr(car(f));
+      x = cdr(CAR(f));
       e = &d;
     }
     else if (T(f) == MACR) {
       d = env;
-      v = car(f);
-      for (; T(v) == CONS && T(x) == CONS; v = cdr(v), x = cdr(x))
-        d = pair(car(v), car(x), &d);
+      for (v = CAR(f); T(v) == CONS && T(x) == CONS; v = CDR(v), x = CDR(x))
+        d = pair(CAR(v), CAR(x), &d);
       if (T(v) == CONS)
         return ret(5, err(5));
       if (T(v) != NIL)
         d = pair(v, x, &d);
-      x = eval(cdr(f), &d);
+      x = eval(CDR(f), &d);
     }
     else
       return ret(5, err(4));
@@ -915,8 +913,8 @@ L eval(L x, P e) {
 void printlist(L t) {
   putc('(', out);
   while (1) {
-    print(car(t));
-    if (not(t = cdr(t)))
+    print(CAR(t));
+    if (not(t = CDR(t)))
       break;
     if (T(t) != CONS) {
       fprintf(out, " . ");
