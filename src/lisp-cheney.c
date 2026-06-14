@@ -69,17 +69,15 @@ typedef uint64_t I;                             /* unsigned 64 bit integer of a 
 typedef int      S;                             /* signed size of an atom string on the heap, negative for forwarding */
 typedef L       *P;                             /* pointer to a root variable with a value that is updated by GC */
 
-/* T(x) returns the tag bits of a NaN-boxed Lisp expression x */
-#define T(x) (*(I*)&x >> 48)
-
 /* primitive, atom, string, cons, closure, macro, GC forward, GC var pointer and nil tags (reserve 0x7ff8 for nan) */
 enum { PRIM=0x7ff9, ATOM=0x7ffa, STRG=0x7ffb, CONS=0x7ffc, CLOS=0x7ffe, MACR=0x7fff, FORW=0xfffd, VARP=0xfffe, NIL=0xffff };
 
 /* NaN-boxing specific functions */
-L box(I t, I i) { i |= t<<48; return *(P)&i; }          /* return NaN-boxed double with tag t and 48 bit ordinal i */
-I ord(L x)      { return *(I*)&x & 0xffffffffffff; }    /* remove tag bits to return the 48 bit ordinal */
-L num(L n)      { return n; }                           /* check for a valid number: return n == n ? n : err(5); */
-I equ(L x, L y) { return *(I*)&x == *(I*)&y; }          /* return nonzero if x equals y */
+I T(L x) { union { L x; uint64_t i; } u = {x}; return u.i>>48; }
+L box(I t, I i) { union { uint64_t i; L x; } u = {(uint64_t)t << 48 | i}; return u.x; }
+I ord(L x)      { union { L x; uint64_t i; } u = {x}; return u.i & 0xffffffffffff; }
+L num(L n)      { return n; }                           /* could check for a valid number return n == n ? n : err(5); */
+I equ(L x, L y) { union { L x; uint64_t i; } u = {x}, v = {y}; return u.i == v.i; }
 
 /*----------------------------------------------------------------------------*\
  |      I/O BUFFERS AND ERROR MESSAGES                                         |
@@ -535,7 +533,7 @@ L f_lt(P t, P e) {
   L s = evlis(t, e), x = car(s), y = car(cdr(s));
   return (T(x) == T(y) && (T(x) & ~(ATOM^STRG)) == ATOM ? strcmp(A+ord(x), A+ord(y)) < 0 :
       x == x && y == y ? x < y :
-      T(x) < T(y)) ? tru : nil;
+      T(x) < T(y) || (T(x) == T(y) && ord(x) < ord(y))) ? tru : nil;
 }
 
 L f_eq(P t, P e) {
