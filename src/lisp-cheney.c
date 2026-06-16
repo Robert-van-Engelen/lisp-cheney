@@ -88,7 +88,7 @@ int fin = 0;
 FILE *in[10], *out;
 
 /* tokenization buffer, the next character we're looking at, readline pointer and line, prompt string */
-char buf[256], see = '\n', *ptr = "", *line = NULL, ps[20];
+char buf[256], see = 0, *ptr = "", *line = NULL, ps[20];
 
 /* state of the setjump-longjmp exception handler with jump buffer jb and number of active root variables n */
 struct State {
@@ -294,6 +294,11 @@ FILE *input(const char *s) {
   return fin <= 9 && (in[fin] = fopen(s, "r")) ? in[fin++] : NULL;
 }
 
+/* return nonzero if we are looking at character c, ' ' means any white space */
+I seeing(char c) {
+  return c == ' ' ? see >= 0 && see <= c : (c == '\n' && !see) || see == c;;
+}
+
 /* advance to the next character */
 void look() {
   int c;
@@ -302,10 +307,10 @@ void look() {
     if (c != EOF)
       return;
     fclose(in[--fin]);                          /* if end of file, then close the file and read previous open file */
-    see = '\n';                                 /* pretend we see a newline at eof */
+    see = 0;
   }
 #ifdef HAVE_READLINE_H
-  if (see == '\n') {                            /* if looking at the end of the current readline line */
+  if (!see) {                                   /* if looking at the end of the current readline line */
     BREAK_OFF;                                  /* disable interrupt to prevent free() without final line = NULL */
     if (line)                                   /* free the old line that was malloc'ed by readline */
       free(line);
@@ -316,24 +321,18 @@ void look() {
     add_history(line);                          /* make it part of the history */
     strcpy(ps, "?");                            /* change prompt to ? */
   }
-  if (!(see = *ptr++))
-    see = '\n';
+  see = *ptr++;
 #else
-  if (see == '\n') {
+  if (seeing('\n')) {
     printf("%s", ps);
     strcpy(ps, "?");
   }
   if ((c = getchar()) == EOF) {
     freopen("/dev/tty", "r", stdin);
-    c = '\n';
+    c = 0;
   }
   see = c;
 #endif
-}
-
-/* return nonzero if we are looking at character c, ' ' means any white space */
-I seeing(char c) {
-  return c == ' ' ? see > 0 && see <= c : see == c;
 }
 
 /* return the look ahead character from standard input, advance to the next */
@@ -345,7 +344,7 @@ char get() {
 
 /* tokenize into buf[], return first character of buf[] */
 char scan() {
-  int i = 0;
+  I i = 0;
   while (seeing(' ') || seeing(';'))            /* skip white space and ;-comments */
     if (get() == ';')
       while (!seeing('\n'))                     /* skip ;-comment until newline */
@@ -685,7 +684,7 @@ L f_setcdr(P t, P e) {
 
 L f_read(P t, P _) {
   L x; char c = see;
-  see = ' ';
+  see = 0;
   *ps = 0;
   x = readlisp();
   see = c;
